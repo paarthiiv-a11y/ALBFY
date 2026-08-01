@@ -41,12 +41,21 @@ SPOTIFY_RE = re.compile(
 
 def _make_session() -> requests.Session:
     s = requests.Session()
+    retry = requests.packages.urllib3.util.retry.Retry(
+        total=5,
+        backoff_factor=1.5,
+        status_forcelist=[429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST"],
+    )
+    adapter = requests.adapters.HTTPAdapter(max_retries=retry)
+    s.mount("https://", adapter)
+    s.mount("http://", adapter)
     s.headers.update({
         "User-Agent": UA,
         "Referer": SPOTI_BASE + "/en2",
         "X-Requested-With": "XMLHttpRequest",
     })
-    r = s.get(SPOTI_BASE + "/en2", timeout=15)
+    r = s.get(SPOTI_BASE + "/en2", timeout=30)
     soup = BeautifulSoup(r.text, "html.parser")
     hidden = soup.find("input", {"type": "hidden", "name": re.compile(r"^_")})
     s._csrf = {hidden["name"]: hidden["value"]}
@@ -58,7 +67,7 @@ def _fetch_action(s: requests.Session, spotify_url: str) -> str:
         "url": spotify_url,
         "g-recaptcha-response": "faketoken",
         **s._csrf,
-    }, timeout=20)
+    }, timeout=60)
     resp = r.json()
     if resp.get("error"):
         raise Exception(resp.get("message", "unknown error"))
@@ -86,7 +95,7 @@ def _download_thumb(url: str, name: str):
     try:
         safe = re.sub(r'[\\/*?:"<>|]', "", name)[:80]
         path = os.path.join(DOWNLOAD_DIR, f"{safe}_thumb.jpg")
-        with requests.get(url, timeout=15, headers={"User-Agent": UA}) as r:
+        with requests.get(url, timeout=30, headers={"User-Agent": UA}) as r:
             r.raise_for_status()
             with open(path, "wb") as f:
                 f.write(r.content)
@@ -120,7 +129,7 @@ def _fetch_one(s: requests.Session, form_data: dict, index: int, fallback_thumb:
     except Exception:
         title, artist, name, thumb_url = f"Track {index + 1}", "", f"Track {index + 1}", fallback_thumb
 
-    r = s.post(SPOTI_BASE + "/action/track", data=form_data, timeout=30)
+    r = s.post(SPOTI_BASE + "/action/track", data=form_data, timeout=60)
     resp = r.json()
     if resp.get("error"):
         return index, name, title, artist, None, None, resp.get("message")
